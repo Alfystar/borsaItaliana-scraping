@@ -2,7 +2,7 @@
 
 import pytest
 
-from borsa_italiana_scraping import cerca, RicercaNonDisponibile, Sessione
+from borsa_italiana_scraping import cerca, Sessione
 from borsa_italiana_scraping.tipi import RisultatoRicerca
 
 
@@ -19,26 +19,37 @@ class TestRicerca:
 
     def test_cerca_enel(self, sessione: Sessione) -> None:
         """Cerca 'ENEL' e verifica il formato dei risultati."""
-        try:
-            risultati = cerca("ENEL", lingua="it", sessione=sessione)
-            assert isinstance(risultati, list)
-            # Se la ricerca funziona, deve trovare qualcosa
-            if risultati:
-                r = risultati[0]
-                assert isinstance(r, RisultatoRicerca)
-                assert r.isin  # ISIN non vuoto
-                assert r.nome  # Nome non vuoto
-                assert r.tipo  # Tipo non vuoto
-        except RicercaNonDisponibile:
-            pytest.skip("Ricerca JSON bloccata da Cloudflare")
+        risultati = cerca("ENEL", lingua="it", sessione=sessione)
+        assert isinstance(risultati, list)
+        assert len(risultati) > 0, "La ricerca 'ENEL' deve trovare almeno un risultato"
+        r = risultati[0]
+        assert isinstance(r, RisultatoRicerca)
+        assert r.isin == "IT0003128367"
+        assert r.nome
+        assert r.tipo
 
     def test_cerca_btp(self, sessione: Sessione) -> None:
-        """Cerca 'BTP' e verifica la presenza di risultati."""
-        try:
-            risultati = cerca("BTP", lingua="en", sessione=sessione)
-            assert isinstance(risultati, list)
-        except RicercaNonDisponibile:
-            pytest.skip("Ricerca JSON bloccata da Cloudflare")
+        """Cerca 'BTP' e verifica la presenza di obbligazioni."""
+        risultati = cerca("BTP", lingua="it", sessione=sessione)
+        assert isinstance(risultati, list)
+        assert len(risultati) > 0
+        # Tutti i risultati devono avere ISIN
+        for r in risultati:
+            assert r.isin
+            assert r.isin.startswith("IT")
+
+    def test_cerca_isin_esatto(self, sessione: Sessione) -> None:
+        """Cerca un ISIN esatto — deve usare exactSymbolMatch."""
+        risultati = cerca("IT0005634800", lingua="it", sessione=sessione)
+        assert len(risultati) >= 1
+        # Il match esatto deve essere il primo risultato
+        assert risultati[0].isin == "IT0005634800"
+
+    def test_cerca_inglese(self, sessione: Sessione) -> None:
+        """Cerca in inglese."""
+        risultati = cerca("ENEL", lingua="en", sessione=sessione)
+        assert isinstance(risultati, list)
+        assert len(risultati) > 0
 
     def test_lingua_invalida(self, sessione: Sessione) -> None:
         """Una lingua non supportata deve sollevare ValueError."""

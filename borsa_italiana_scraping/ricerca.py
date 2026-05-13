@@ -1,4 +1,8 @@
-"""Ricerca strumenti su Borsa Italiana (endpoint JSON XHR)."""
+"""Ricerca strumenti su Borsa Italiana (endpoint JSON interno).
+
+L'endpoint ``/borsa/searchengine/all/json/search.html`` restituisce
+JSON puro senza protezione WAF — non servono header XHR né JWT.
+"""
 
 from __future__ import annotations
 
@@ -6,8 +10,10 @@ from .eccezioni import RicercaNonDisponibile
 from .sessione import Sessione
 from .tipi import RisultatoRicerca
 
-# URL endpoint ricerca
-_URL_RICERCA = "https://www.borsaitaliana.it/borsa/searchengine/search.html"
+# URL endpoint JSON (scoperto dal JS ``bb.search.js`` → ``bit.init.search``)
+_URL_RICERCA = (
+    "https://www.borsaitaliana.it/borsa/searchengine/all/json/search.html"
+)
 
 
 def cerca(
@@ -18,7 +24,7 @@ def cerca(
 ) -> list[RisultatoRicerca]:
     """Cerca strumenti finanziari su Borsa Italiana.
 
-    Usa l'endpoint JSON XHR del motore di ricerca del sito.
+    Usa l'endpoint JSON interno del motore di ricerca del sito.
 
     Args:
         query: testo di ricerca (es. ``"BTP"``, ``"ENEL"``).
@@ -31,8 +37,7 @@ def cerca(
         Lista di ``RisultatoRicerca``.
 
     Raises:
-        RicercaNonDisponibile: se l'endpoint JSON è bloccato
-            da Cloudflare/WAF.
+        RicercaNonDisponibile: se l'endpoint JSON non risponde.
     """
     lingua = lingua.lower()
     if lingua not in ("it", "en"):
@@ -46,21 +51,29 @@ def cerca(
         parametri = {"lang": lingua, "q": query}
 
         try:
-            dati = sessione.get_json_xhr(_URL_RICERCA, params=parametri)
+            dati = sessione.get_json(_URL_RICERCA, params=parametri)
         except Exception as err:
             raise RicercaNonDisponibile(
-                "La ricerca JSON non è disponibile — probabilmente Cloudflare ha bloccato "
-                "la richiesta. Alternativa: usa lista_btp() per ottenere la lista dei BTP "
-                f"oppure ottieni_scheda() con un ISIN noto. Errore originale: {err}"
+                "La ricerca JSON non è disponibile. "
+                "Alternativa: usa lista_btp() per ottenere la lista dei BTP "
+                f"oppure ottieni_scheda() con un ISIN noto. Errore: {err}"
             ) from err
 
         quotes = dati.get("quotes", [])
+
+        # exactSymbolMatch → redirect diretto nel browser, per noi è il match esatto
+        exact = dati.get("exactSymbolMatch")
+        if exact and isinstance(exact, list):
+            quotes = exact + quotes
+
         risultati: list[RisultatoRicerca] = []
+        isin_visti: set[str] = set()
 
         for q in quotes:
             isin = q.get("symbol", "")
-            if not isin:
+            if not isin or isin in isin_visti:
                 continue
+            isin_visti.add(isin)
             risultati.append(
                 RisultatoRicerca(
                     isin=isin,
