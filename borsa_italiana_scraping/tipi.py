@@ -79,10 +79,13 @@ class RisultatoRicerca:
     isin: str
     mic: str
     nome: str
-    tipo: str  # "Obbligazione", "Azione", ecc.
+    tipo: str  # "Obbligazione", "Azione", "ETF", "ETC/ETN", ecc.
     mercato: str
     comparto: str | None = None
     sotto_comparto: str | None = None
+    dettaglio_mercato: str | None = None   # es. "Euronext Milan", "ETF"
+    sotto_tipo: str | None = None          # es. "MTA", "MOT", "ETF"
+    link: str | None = None                # URL alla pagina scheda
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +103,16 @@ class SchedaStrumento:
     tipo: str  # "azione", "obbligazione", "etf", "altro"
     mercato: str
 
+    # --- Campi comuni ---
+    descrizione: str | None = None            # meta description della pagina
+    url_pagina: str | None = None             # URL canonico della scheda
+    valuta_liquidazione: str | None = None     # Settlement currency (se diversa)
+    minimo_anno: Decimal | None = None         # Year Low
+    massimo_anno: Decimal | None = None        # Year High
+    apertura: Decimal | None = None            # Opening price
+    minimo_giorno: Decimal | None = None       # Day Low
+    massimo_giorno: Decimal | None = None      # Day High
+
     # --- Campi specifici obbligazioni (None per azioni) ---
     rendimento_lordo: Decimal | None = None
     rendimento_netto: Decimal | None = None
@@ -113,6 +126,14 @@ class SchedaStrumento:
     tipo_bond: str | None = None
     lotto_minimo: int | None = None
     descrizione_payout: str | None = None
+    frequenza_cedola: str | None = None        # Quarterly, Semiannual, Annual...
+    convenzione_giorni: str | None = None      # ACT/ACT (ICMA), 30/360, ...
+    struttura_bond: str | None = None          # Fixed Rate, Structured Interest Rate...
+    outstanding: Decimal | None = None         # Ammontare in circolazione
+    tipologia: str | None = None               # Italian Government Bonds, Corporate, ...
+    prezzo_riferimento: Decimal | None = None   # Reference price
+    data_prezzo_riferimento: date | None = None # Reference price date
+    data_primo_giorno: date | None = None       # First Day of Trading
 
     # --- Campi specifici azioni (None per obbligazioni) ---
     settore: str | None = None
@@ -121,6 +142,7 @@ class SchedaStrumento:
     performance_1m: Decimal | None = None
     performance_6m: Decimal | None = None
     performance_1y: Decimal | None = None
+    indici: list[str] | None = None            # FTSE MIB, FTSE All-Share, ...
 
 
 # ---------------------------------------------------------------------------

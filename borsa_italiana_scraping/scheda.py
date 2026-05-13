@@ -66,11 +66,16 @@ def _parsa_numero(testo: str, lingua: str = "en") -> Decimal | None:
 
 
 def _parsa_data_scheda(testo: str) -> date | None:
-    """Parsa una data dalla pagina scheda (formati vari)."""
+    """Parsa una data dalla pagina scheda (formati vari).
+
+    Supporta sia anni a 4 cifre (``dd/mm/YYYY``) che a 2 cifre
+    (``dd/mm/YY`` → interpretato come 20YY).
+    """
     testo = _pulisci_testo(testo)
     if not testo or testo == "-":
         return None
-    for fmt in ("%d/%m/%Y", "%m/%d/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d.%m.%Y"):
+    for fmt in ("%d/%m/%Y", "%m/%d/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d.%m.%Y",
+                "%d/%m/%y", "%y/%m/%d"):
         try:
             return datetime.strptime(testo, fmt).date()
         except ValueError:
@@ -214,8 +219,13 @@ def _estrai_mercato(soup: BeautifulSoup, lingua: str) -> str:
     return val if val else "MOT"
 
 
-def _estrai_valuta(soup: BeautifulSoup, lingua: str) -> str:
-    """Estrae la valuta di negoziazione, default EUR."""
+def _estrai_valuta(soup: BeautifulSoup, lingua: str) -> tuple[str, str | None]:
+    """Estrae la valuta di negoziazione e liquidazione.
+
+    Il campo "Negotiation Currency/ Settlement currency" ha formato
+    ``EUR/EUR`` o ``USD/EUR``. Restituisce (negoziazione, liquidazione).
+    Se il campo ha un solo valore, liquidazione è None.
+    """
     etichette = [
         "Negotiation Currency", "Negotiation currency",
         "Valuta di Negoziazione", "Valuta di negoziazione",
@@ -225,9 +235,15 @@ def _estrai_valuta(soup: BeautifulSoup, lingua: str) -> str:
     val = _trova_valore(soup, etichette)
     if val:
         val = val.strip().upper()
+        # Formato "EUR/EUR" → negoziazione/liquidazione
+        if "/" in val:
+            parti = [p.strip() for p in val.split("/")]
+            neg = parti[0] if len(parti[0]) == 3 and parti[0].isalpha() else "EUR"
+            liq = parti[1] if len(parti) > 1 and len(parti[1]) == 3 and parti[1].isalpha() else None
+            return neg, liq if liq != neg else None
         if len(val) == 3 and val.isalpha():
-            return val
-    return "EUR"
+            return val, None
+    return "EUR", None
 
 
 # ------------------------------------------------------------------
@@ -264,28 +280,31 @@ def ottieni_scheda(
         sessione = Sessione()
 
     try:
-        # Scarica la pagina scheda
+        # Scarica la pagina scheda (segue redirect automatico)
         parametri: dict[str, str] = {"code": isin, "lang": lingua}
         if mic:
             parametri["mic"] = mic
 
-        soup = sessione.get_html(_URL_SCHEDA, params=parametri)
+        soup, url_finale = sessione.get_html_con_url(_URL_SCHEDA, params=parametri)
 
         # Controlla se la pagina esiste
         testo_pagina = soup.get_text(" ", strip=True)
         if any(msg in testo_pagina for msg in ("Page not found", "Pagina non trovata", "404")):
             raise StrumentoNonTrovato(f"Pagina scheda non trovata per ISIN '{isin}'")
 
-        # Determina tipo e URL finale (dopo eventuali redirect)
-        url_finale = ""
-        base_tag = soup.find("link", rel="canonical")
-        if base_tag and isinstance(base_tag, Tag) and base_tag.get("href"):
-            url_finale = str(base_tag["href"])
-
+        # Determina tipo dall'URL finale (dopo redirect)
         tipo = _determina_tipo(soup, url_finale)
         nome = _estrai_nome(soup)
         mercato = _estrai_mercato(soup, lingua)
-        valuta = _estrai_valuta(soup, lingua)
+        valuta, valuta_liq = _estrai_valuta(soup, lingua)
+
+        # Descrizione dal meta tag
+        descrizione = None
+        meta_desc = soup.find("meta", attrs={"name": "description"})
+        if meta_desc and isinstance(meta_desc, Tag):
+            desc_content = meta_desc.get("content", "")
+            if isinstance(desc_content, str):
+                descrizione = _pulisci_testo(desc_content) or None
 
         # Prezzo principale
         prezzo = _trova_prezzo_principale(soup, lingua)
@@ -310,6 +329,29 @@ def ottieni_scheda(
         ])
         variazione = _parsa_percentuale(variazione_str, lingua) if variazione_str else None
 
+        # Campi comuni: range giornaliero e annuale
+        apertura = _parsa_numero(
+            _trova_valore(soup, ["Opening", "Apertura"]) or "", lingua
+        )
+        minimo_giorno = _parsa_numero(
+            _trova_valore(soup, ["Day Low", "Minimo Giorno"]) or "", lingua
+        )
+        massimo_giorno = _parsa_numero(
+            _trova_valore(soup, ["Day High", "Massimo Giorno"]) or "", lingua
+        )
+
+        # Year Low/High — il formato può essere "8.808 - 26/02/19"
+        min_anno_raw = _trova_valore(soup, ["Year Low", "Minimo Anno"])
+        max_anno_raw = _trova_valore(soup, ["Year High", "Massimo Anno"])
+        minimo_anno = _parsa_numero(
+            min_anno_raw.split("-")[0].strip() if min_anno_raw and "-" in min_anno_raw
+            else (min_anno_raw or ""), lingua
+        )
+        massimo_anno = _parsa_numero(
+            max_anno_raw.split("-")[0].strip() if max_anno_raw and "-" in max_anno_raw
+            else (max_anno_raw or ""), lingua
+        )
+
         # Costruisci il risultato base
         scheda = SchedaStrumento(
             isin=isin,
@@ -319,6 +361,14 @@ def ottieni_scheda(
             valuta=valuta,
             tipo=tipo,
             mercato=mercato,
+            descrizione=descrizione,
+            url_pagina=url_finale or None,
+            valuta_liquidazione=valuta_liq,
+            apertura=apertura,
+            minimo_giorno=minimo_giorno,
+            massimo_giorno=massimo_giorno,
+            minimo_anno=minimo_anno,
+            massimo_anno=massimo_anno,
         )
 
         # Campi specifici per obbligazioni
@@ -365,28 +415,28 @@ def _arricchisci_obbligazione(
     # Rendimento lordo
     val = _trova_valore(soup, [
         "Gross Yield", "Rendimento Lordo", "YTM Gross",
-        "Gross Yield to Maturity",
+        "Gross Yield to Maturity", "Gross yield to maturity",
     ])
     scheda.rendimento_lordo = _parsa_percentuale(val, lingua) if val else None
 
     # Rendimento netto
     val = _trova_valore(soup, [
         "Net Yield", "Rendimento Netto", "YTM Net",
-        "Net Yield to Maturity",
+        "Net Yield to Maturity", "Net yield to maturity",
     ])
     scheda.rendimento_netto = _parsa_percentuale(val, lingua) if val else None
 
     # Rateo lordo
     val = _trova_valore(soup, [
         "Gross Accrued Interest", "Rateo Lordo",
-        "Accrued Interest Gross",
+        "Accrued Interest Gross", "Gross accrued interest",
     ])
     scheda.rateo_lordo = _parsa_numero(val, lingua) if val else None
 
     # Rateo netto
     val = _trova_valore(soup, [
         "Net Accrued Interest", "Rateo Netto",
-        "Accrued Interest Net",
+        "Accrued Interest Net", "Net accrued interest",
     ])
     scheda.rateo_netto = _parsa_numero(val, lingua) if val else None
 
@@ -414,7 +464,7 @@ def _arricchisci_obbligazione(
     # Scadenza
     val = _trova_valore(soup, [
         "Maturity Date", "Scadenza", "Maturity",
-        "Data Scadenza",
+        "Data Scadenza", "Expiry Date", "Data Scadenza",
     ])
     scheda.scadenza = _parsa_data_scheda(val) if val else None
 
@@ -424,7 +474,7 @@ def _arricchisci_obbligazione(
     ])
     scheda.emittente = val
 
-    # Tipo bond
+    # Tipo bond (coupon type)
     val = _trova_valore(soup, [
         "Coupon Type", "Tipo Cedola", "Bond Type",
         "Tipo Obbligazione",
@@ -433,8 +483,8 @@ def _arricchisci_obbligazione(
 
     # Lotto minimo
     val = _trova_valore(soup, [
-        "Minimum Lot", "Lotto Minimo", "Min. Lot",
-        "Min Lot",
+        "Lot Size", "Minimum Lot", "Lotto Minimo",
+        "Min. Lot", "Min Lot",
     ])
     if val:
         numero = _parsa_numero(val, lingua)
@@ -446,6 +496,63 @@ def _arricchisci_obbligazione(
         "Coupon Description",
     ])
     scheda.descrizione_payout = val
+
+    # --- Nuovi campi ---
+
+    # Frequenza cedola
+    val = _trova_valore(soup, [
+        "Coupon Frequency", "Frequenza Cedola",
+        "Frequenza Cedole",
+    ])
+    scheda.frequenza_cedola = val
+
+    # Convenzione giorni
+    val = _trova_valore(soup, [
+        "Day Count Convention", "Convenzione Giorni",
+        "Day Count",
+    ])
+    scheda.convenzione_giorni = val
+
+    # Struttura bond
+    val = _trova_valore(soup, [
+        "Bond Structure", "Struttura Obbligazione",
+        "Struttura Bond",
+    ])
+    scheda.struttura_bond = val
+
+    # Outstanding (ammontare in circolazione)
+    val = _trova_valore(soup, [
+        "Outstanding", "Ammontare in Circolazione",
+        "Circolante",
+    ])
+    scheda.outstanding = _parsa_numero(val, lingua) if val else None
+
+    # Tipologia (Italian Government Bonds, Corporate, etc.)
+    val = _trova_valore(soup, [
+        "Tipology", "Tipologia",
+    ])
+    scheda.tipologia = val
+
+    # Prezzo di riferimento
+    val = _trova_valore(soup, [
+        "Reference price", "Prezzo di Riferimento",
+        "Reference Price",
+    ])
+    scheda.prezzo_riferimento = _parsa_numero(val, lingua) if val else None
+
+    # Data prezzo di riferimento
+    val = _trova_valore(soup, [
+        "Reference price date", "Data Prezzo di Riferimento",
+        "Reference Price Date",
+    ])
+    scheda.data_prezzo_riferimento = _parsa_data_scheda(val) if val else None
+
+    # Data primo giorno di negoziazione
+    val = _trova_valore(soup, [
+        "First Day of Trading", "Primo Giorno di Negoziazione",
+        "Prima Data di Negoziazione",
+    ])
+    scheda.data_primo_giorno = _parsa_data_scheda(val) if val else None
 
 
 def _arricchisci_azione(
@@ -477,21 +584,28 @@ def _arricchisci_azione(
 
     # Performance 1 mese
     val = _trova_valore(soup, [
-        "Perf. 1 month", "Perf. 1 mese", "Performance 1M",
-        "Perf 1M", "1 Month",
+        "1 Month Performance", "Perf. 1 month", "Perf. 1 mese",
+        "Performance 1M", "Perf 1M", "1 Month",
     ])
     scheda.performance_1m = _parsa_percentuale(val, lingua) if val else None
 
     # Performance 6 mesi
     val = _trova_valore(soup, [
-        "Perf. 6 months", "Perf. 6 mesi", "Performance 6M",
-        "Perf 6M", "6 Months",
+        "6 Months Performance", "Perf. 6 months", "Perf. 6 mesi",
+        "Performance 6M", "Perf 6M", "6 Months",
     ])
     scheda.performance_6m = _parsa_percentuale(val, lingua) if val else None
 
     # Performance 1 anno
     val = _trova_valore(soup, [
-        "Perf. 1 year", "Perf. 1 anno", "Performance 1Y",
-        "Perf 1Y", "1 Year",
+        "1 Year Performance", "Perf. 1 year", "Perf. 1 anno",
+        "Performance 1Y", "Perf 1Y", "1 Year",
     ])
     scheda.performance_1y = _parsa_percentuale(val, lingua) if val else None
+
+    # Indici di appartenenza
+    val = _trova_valore(soup, [
+        "Index", "Indice", "Indices", "Indici",
+    ])
+    if val:
+        scheda.indici = [s.strip() for s in val.split(",") if s.strip()]

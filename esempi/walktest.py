@@ -22,6 +22,7 @@ from borsa_italiana_scraping import (
     cerca,
     DatiNonDisponibili,
 )
+from decimal import Decimal
 
 ISIN_ENEL = "IT0003128367"
 ISIN_BTP_PIU = "IT0005634800"
@@ -36,7 +37,7 @@ def step_1_sessione(sess: Sessione) -> None:
     """STEP 1 — Sessione e warmup JWT"""
     print("""
 ╔══════════════════════════════════════════════════════════════╗
-║  STEP 1: Sessione HTTP + Warmup JWT                        ║
+║  STEP 1: Sessione HTTP + Warmup JWT                          ║
 ╚══════════════════════════════════════════════════════════════╝
 
 La classe Sessione gestisce:
@@ -54,7 +55,7 @@ def step_2_storico(sess: Sessione) -> None:
     """STEP 2 — Dati storici OHLCV (JSON API)"""
     print("""
 ╔══════════════════════════════════════════════════════════════╗
-║  STEP 2: Dati storici OHLCV                                ║
+║  STEP 2: Dati storici OHLCV                                  ║
 ╚══════════════════════════════════════════════════════════════╝
 
 Fonte:  JSON API grafici.borsaitaliana.it
@@ -88,7 +89,7 @@ def step_3_intraday(sess: Sessione) -> None:
     """STEP 3 — Dati intraday (JSON API)"""
     print("""
 ╔══════════════════════════════════════════════════════════════╗
-║  STEP 3: Dati intraday                                     ║
+║  STEP 3: Dati intraday                                       ║
 ╚══════════════════════════════════════════════════════════════╝
 
 Fonte:  JSON API grafici.borsaitaliana.it
@@ -112,7 +113,7 @@ def step_4_prezzo_corrente(sess: Sessione) -> None:
     """STEP 4 — Prezzo corrente (API + fallback scraping)"""
     print("""
 ╔══════════════════════════════════════════════════════════════╗
-║  STEP 4: Prezzo corrente                                   ║
+║  STEP 4: Prezzo corrente                                     ║
 ╚══════════════════════════════════════════════════════════════╝
 
 Strategia a 2 livelli:
@@ -133,7 +134,7 @@ def step_5_scheda(sess: Sessione) -> None:
     """STEP 5 — Scheda strumento (scraping HTML)"""
     print("""
 ╔══════════════════════════════════════════════════════════════╗
-║  STEP 5: Scheda strumento (metadati ricchi)                ║
+║  STEP 5: Scheda strumento (metadati ricchi)                  ║
 ╚══════════════════════════════════════════════════════════════╝
 
 Fonte: Scraping HTML della pagina scheda su www.borsaitaliana.it
@@ -175,7 +176,7 @@ def step_6_lista(sess: Sessione) -> None:
     """STEP 6 — Lista BTP (scraping tabella HTML)"""
     print("""
 ╔══════════════════════════════════════════════════════════════╗
-║  STEP 6: Lista BTP quotati sul MOT                         ║
+║  STEP 6: Lista BTP quotati sul MOT                           ║
 ╚══════════════════════════════════════════════════════════════╝
 
 Fonte: Scraping della tabella HTML su www.borsaitaliana.it
@@ -199,7 +200,7 @@ def step_7_ricerca(sess: Sessione) -> None:
     """STEP 7 — Ricerca strumenti (JSON endpoint interno)"""
     print("""
 ╔══════════════════════════════════════════════════════════════╗
-║  STEP 7: Ricerca strumenti                                 ║
+║  STEP 7: Ricerca strumenti                                   ║
 ╚══════════════════════════════════════════════════════════════╝
 
 Fonte: Endpoint JSON /borsa/searchengine/all/json/search.html
@@ -215,15 +216,130 @@ Non richiede JWT né header XHR — endpoint pubblico.
         print()
 
 
+def step_8_pipeline_composita(sess: Sessione) -> None:
+    """STEP 8 — Pipeline composita: ricerca → scheda + storico + prezzo"""
+    print("""
+╔══════════════════════════════════════════════════════════════╗
+║  STEP 8: Pipeline composita (ricerca → dati completi)        ║
+╚══════════════════════════════════════════════════════════════╝
+
+Caso d'uso reale: l'utente cerca un titolo per nome,
+la libreria restituisce gli ISIN, e da quelli si ottengono
+automaticamente metadati, storico e prezzo corrente.
+
+  cerca("...") → ISIN → ottieni_scheda() + ottieni_storico()
+                       + ottieni_prezzo_corrente()
+""")
+
+    query = "Intesa"
+    print(f"  🔍 Ricerca: '{query}'")
+    risultati = cerca(query, lingua="it", sessione=sess)
+    print(f"     Trovati: {len(risultati)} strumenti\n")
+
+    if not risultati:
+        print("  ⚠ Nessun risultato — impossibile proseguire")
+        return
+
+    # Mostra tutti i risultati trovati
+    print(f"  {'#':>3}  {'ISIN':<14} {'Nome':<35} {'Tipo':<18} {'Mercato'}")
+    print(f"  {'─'*3}  {'─'*14} {'─'*35} {'─'*18} {'─'*8}")
+    for i, r in enumerate(risultati, 1):
+        print(f"  {i:>3}  {r.isin:<14} {r.nome[:35]:<35} {r.tipo:<18} {r.mercato}")
+
+    # Prendi il primo strumento (tipicamente l'azione principale)
+    scelto = risultati[0]
+    isin = scelto.isin
+    print(f"\n  ▸ Selezionato: {scelto.nome} ({isin})")
+    print(f"    Tipo: {scelto.tipo} | Mercato: {scelto.mercato}")
+
+    # --- Fase 2: Scheda (metadati ricchi) ---
+    print(f"\n  {'═' * 56}")
+    print(f"  📋 Fase 2: Metadati dalla scheda")
+    print(f"  {'═' * 56}")
+    scheda = ottieni_scheda(isin, lingua="en", sessione=sess)
+    print(f"     Nome completo:     {scheda.nome}")
+    print(f"     Prezzo:            {scheda.prezzo} {scheda.valuta}")
+    var_s = f"{scheda.variazione_percentuale}%" if scheda.variazione_percentuale is not None else "n/d"
+    print(f"     Variazione:        {var_s}")
+    print(f"     Mercato:           {scheda.mercato}")
+    if scheda.tipo == "obbligazione":
+        print(f"     Rendimento lordo:  {scheda.rendimento_lordo}")
+        print(f"     Cedola annua:      {scheda.cedola_annua}")
+        print(f"     Scadenza:          {scheda.scadenza}")
+    else:
+        print(f"     Settore:           {scheda.settore}")
+        print(f"     Capitalizzazione:  {scheda.capitalizzazione}")
+        if scheda.performance_1y is not None:
+            print(f"     Perf 1Y:           {scheda.performance_1y}%")
+
+    # --- Fase 3: Prezzo corrente ---
+    print(f"\n  {'═' * 56}")
+    print(f"  💰 Fase 3: Prezzo corrente")
+    print(f"  {'═' * 56}")
+    prezzo = ottieni_prezzo_corrente(isin, sessione=sess)
+    print(f"     Prezzo:    {prezzo.prezzo} {prezzo.valuta}")
+    print(f"     Var %:     {prezzo.variazione_percentuale}%")
+    print(f"     Data:      {prezzo.data}")
+    print(f"     Fonte:     {prezzo.fonte}")
+
+    # --- Fase 4: Storico OHLCV ---
+    print(f"\n  {'═' * 56}")
+    print(f"  📈 Fase 4: Storico OHLCV (ultimi 3 mesi)")
+    print(f"  {'═' * 56}")
+    storico = ottieni_storico(isin, periodo="3M", sessione=sess)
+    punti = storico.punti
+    print(f"     Punti totali: {len(punti)}")
+
+    if punti:
+        primo, ultimo = punti[0], punti[-1]
+        delta = ultimo.chiusura - primo.chiusura
+        delta_pct = (delta / primo.chiusura * 100).quantize(Decimal("0.01"))
+        print(f"     Range date:   {primo.data} → {ultimo.data}")
+        print(f"     Apertura:     {primo.chiusura} {prezzo.valuta}")
+        print(f"     Chiusura:     {ultimo.chiusura} {prezzo.valuta}")
+        print(f"     Δ 3M:         {'+' if delta >= 0 else ''}{delta} "
+              f"({'+' if delta_pct >= 0 else ''}{delta_pct}%)")
+
+        # Min/max nel periodo
+        min_p = min(punti, key=lambda p: p.minimo)
+        max_p = max(punti, key=lambda p: p.massimo)
+        print(f"     Min periodo:  {min_p.minimo} ({min_p.data})")
+        print(f"     Max periodo:  {max_p.massimo} ({max_p.data})")
+
+        # Ultimi 5 giorni
+        print(f"\n     Ultimi 5 giorni:")
+        print(f"     {'Data':<12} {'Apertura':>10} {'Max':>10} "
+              f"{'Min':>10} {'Chiusura':>10} {'Volume':>12}")
+        for p in punti[-5:]:
+            print(f"     {str(p.data):<12} {p.apertura:>10} {p.massimo:>10} "
+                  f"{p.minimo:>10} {p.chiusura:>10} {p.volume:>12,}")
+
+    # --- Riepilogo ---
+    print(f"""
+  {'═' * 56}
+  ✅ Pipeline completata per {scelto.nome}
+
+  Riepilogo del flusso:
+    cerca("{query}")
+      └─ {len(risultati)} risultati → scelto {isin}
+          ├─ ottieni_scheda()          → {scheda.tipo}, {scheda.valuta}
+          ├─ ottieni_prezzo_corrente() → {prezzo.prezzo} {prezzo.valuta}
+          └─ ottieni_storico("3M")     → {len(punti)} punti OHLCV
+
+  Questo è il flusso tipico del plugin LibreFolio:
+    search() → get_current_value() + get_history_value()
+  {'═' * 56}""")
+
+
 def main() -> None:
     print("""
 ╔══════════════════════════════════════════════════════════════╗
-║                                                            ║
-║   📈 borsa-italiana-scraping — WALKTEST INTERATTIVO        ║
-║                                                            ║
-║   Tour guidato di tutte le funzionalità della libreria.    ║
-║   Ogni step effettua richieste reali a borsaitaliana.it    ║
-║                                                            ║
+║                                                              ║
+║   📈 borsa-italiana-scraping — WALKTEST INTERATTIVO          ║
+║                                                              ║
+║   Tour guidato di tutte le funzionalità della libreria.      ║
+║   Ogni step effettua richieste reali a borsaitaliana.it      ║
+║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
 """)
 
@@ -246,23 +362,27 @@ def main() -> None:
         pausa("Prossimo: lista BTP...")
 
         step_6_lista(sess)
-        pausa("Prossimo: ricerca strumenti (ultima feature)...")
+        pausa("Prossimo: ricerca strumenti...")
 
         step_7_ricerca(sess)
+        pausa("Prossimo: pipeline composita (il flusso operativo)...")
+
+        step_8_pipeline_composita(sess)
 
     print("""
-╔══════════════════════════════════════════════════════════════╗
-║  ✅ WALKTEST COMPLETATO                                    ║
-║                                                            ║
-║  Riepilogo funzionalità testate:                           ║
-║    1. Sessione HTTP + JWT warmup automatico                ║
-║    2. Dati storici OHLCV (JSON API, 7 periodi)             ║
-║    3. Dati intraday (JSON API, 5 risoluzioni)              ║
-║    4. Prezzo corrente (API + fallback scraping)             ║
-║    5. Scheda strumento (metadati: bond + equity)            ║
-║    6. Lista BTP quotati (scraping tabella)                  ║
-║    7. Ricerca strumenti (JSON endpoint, nessun WAF)          ║
-╚══════════════════════════════════════════════════════════════╝
+╔═══════════════════════════════════════════════════════╗
+║  ✅ WALKTEST COMPLETATO                               ║
+║                                                       ║
+║  Riepilogo funzionalità testate:                      ║
+║    1. Sessione HTTP + JWT warmup automatico           ║
+║    2. Dati storici OHLCV (JSON API, 7 periodi)        ║
+║    3. Dati intraday (JSON API, 5 risoluzioni)         ║
+║    4. Prezzo corrente (API + fallback scraping)       ║
+║    5. Scheda strumento (metadati: bond + equity)      ║
+║    6. Lista BTP quotati (scraping tabella)            ║
+║    7. Ricerca strumenti (JSON endpoint, nessun WAF)   ║
+║    8. Pipeline composita (cerca → scheda + storico)   ║
+╚═══════════════════════════════════════════════════════╝
 """)
 
 

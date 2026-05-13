@@ -201,6 +201,13 @@ class Sessione:
         risposta = self._esegui_get(url, params=params)
         return BeautifulSoup(risposta.text, "lxml")
 
+    def get_html_con_url(
+        self, url: str, params: dict | None = None
+    ) -> tuple[BeautifulSoup, str]:
+        """Esegue una GET e restituisce (DOM, URL finale dopo redirect)."""
+        risposta = self._esegui_get(url, params=params)
+        return BeautifulSoup(risposta.text, "lxml"), str(risposta.url)
+
     def get_json_xhr(
         self,
         url: str,

@@ -51,6 +51,16 @@ class TestRicerca:
         assert isinstance(risultati, list)
         assert len(risultati) > 0
 
+    def test_cerca_campi_estesi(self, sessione: Sessione) -> None:
+        """Verifica i nuovi campi (link, dettaglio_mercato, sotto_tipo)."""
+        risultati = cerca("ENEL", lingua="en", sessione=sessione)
+        r = risultati[0]
+        assert r.link is not None
+        assert "borsaitaliana.it" in r.link
+        assert r.dettaglio_mercato is not None  # "Euronext Milan"
+        assert r.sotto_tipo is not None  # "MTA"
+        assert r.comparto is not None  # "AZIONARIO"
+
     def test_lingua_invalida(self, sessione: Sessione) -> None:
         """Una lingua non supportata deve sollevare ValueError."""
         with pytest.raises(ValueError):

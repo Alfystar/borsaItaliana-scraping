@@ -83,6 +83,9 @@ def cerca(
                     mercato=q.get("mercato", ""),
                     comparto=q.get("comparto") or None,
                     sotto_comparto=q.get("subcomparto") or None,
+                    dettaglio_mercato=q.get("marketDetail") or None,
+                    sotto_tipo=q.get("subtype") or None,
+                    link=q.get("link") or None,
                 )
             )
 
