@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "borsa-italiana-scraping"
+version = "0.1.0"
+description = "Libreria Python per ottenere dati finanziari da Borsa Italiana (borsaitaliana.it)"
+readme = "README.md"
+license = {text = "LGPL-3.0-or-later"}
+requires-python = ">=3.11"
+authors = [
+    {name = "LibreFolio Contributors"},
+]
+keywords = ["borsa-italiana", "scraping", "finanza", "btp", "azioni", "obbligazioni"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU Lesser General Public License v3 or later (LGPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial",
+]
+dependencies = [
+    "httpx>=0.27",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "black>=24.0",
+    "ruff>=0.4",
+]
+
+[tool.setuptools.packages.find]
+include = ["borsa_italiana_scraping*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.black]
+line-length = 120
+target-version = ["py311"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: test di integrazione con richieste reali al sito",
+]
