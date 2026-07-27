@@ -185,6 +185,8 @@ def _determina_tipo(soup: BeautifulSoup, url_finale: str) -> str:
         return "obbligazione"
     if "/etf/" in url_lower or "/etfplus/" in url_lower:
         return "etf"
+    if "/fondi/" in url_lower:
+        return "fondo"
     if "/azioni/" in url_lower:
         return "azione"
     # Controlla anche il contenuto testuale

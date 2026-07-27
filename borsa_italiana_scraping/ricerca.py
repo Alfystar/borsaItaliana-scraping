@@ -48,49 +48,109 @@ def cerca(
         sessione = Sessione()
 
     try:
-        parametri = {"lang": lingua, "q": query}
+        risultati = _cerca_una(query, lingua, sessione)
 
-        try:
-            dati = sessione.get_json(_URL_RICERCA, params=parametri)
-        except Exception as err:
-            raise RicercaNonDisponibile(
-                "La ricerca JSON non è disponibile. "
-                "Alternativa: usa lista_btp() per ottenere la lista dei BTP "
-                f"oppure ottieni_scheda() con un ISIN noto. Errore: {err}"
-            ) from err
-
-        quotes = dati.get("quotes", [])
-
-        # exactSymbolMatch → redirect diretto nel browser, per noi è il match esatto
-        exact = dati.get("exactSymbolMatch")
-        if exact and isinstance(exact, list):
-            quotes = exact + quotes
-
-        risultati: list[RisultatoRicerca] = []
-        isin_visti: set[str] = set()
-
-        for q in quotes:
-            isin = q.get("symbol", "")
-            if not isin or isin in isin_visti:
-                continue
-            isin_visti.add(isin)
-            risultati.append(
-                RisultatoRicerca(
-                    isin=isin,
-                    mic=q.get("mic", ""),
-                    nome=q.get("title", ""),
-                    tipo=q.get("typeLabel", ""),
-                    mercato=q.get("mercato", ""),
-                    comparto=q.get("comparto") or None,
-                    sotto_comparto=q.get("subcomparto") or None,
-                    dettaglio_mercato=q.get("marketDetail") or None,
-                    sotto_tipo=q.get("subtype") or None,
-                    link=q.get("link") or None,
-                )
-            )
+        # Ripiego per i fondi (e nomi lunghi): la site-search di BI fa match
+        # per PREFISSO su ogni parola, quindi un nome-report esteso
+        # ("...DIVERSIFICATO 40 P") non combacia col nome abbreviato di BI
+        # ("...Divers. 40 P"). Si riprova accorciando/scartando le parole lunghe.
+        if not risultati:
+            for variante in _varianti_query(query):
+                risultati = _cerca_una(variante, lingua, sessione)
+                if risultati:
+                    break
 
         return risultati
 
     finally:
         if sessione_locale:
             sessione.chiudi()
+
+
+def _cerca_una(query: str, lingua: str, sessione: Sessione) -> list[RisultatoRicerca]:
+    """Esegue una singola query alla site-search e mappa le quotes.
+
+    Nota: per azioni/obbligazioni ``symbol`` è l'ISIN; per i **fondi** ``symbol``
+    è il **codice interno** di Borsa Italiana (es. ``2FADB602822``) e ``link``
+    punta a ``scheda.html?code={codice}`` — l'ISIN non è presente nella quote.
+    """
+    parametri = {"lang": lingua, "q": query}
+
+    try:
+        dati = sessione.get_json(_URL_RICERCA, params=parametri)
+    except Exception as err:
+        raise RicercaNonDisponibile(
+            "La ricerca JSON non è disponibile. "
+            "Alternativa: usa lista_btp() per ottenere la lista dei BTP "
+            f"oppure ottieni_scheda() con un ISIN noto. Errore: {err}"
+        ) from err
+
+    quotes = dati.get("quotes", [])
+
+    # exactSymbolMatch → redirect diretto nel browser, per noi è il match esatto
+    exact = dati.get("exactSymbolMatch")
+    if exact and isinstance(exact, list):
+        quotes = exact + quotes
+
+    risultati: list[RisultatoRicerca] = []
+    simboli_visti: set[str] = set()
+
+    for q in quotes:
+        simbolo = q.get("symbol", "")
+        if not simbolo or simbolo in simboli_visti:
+            continue
+        simboli_visti.add(simbolo)
+        risultati.append(
+            RisultatoRicerca(
+                isin=simbolo,
+                mic=q.get("mic", ""),
+                nome=q.get("title", ""),
+                tipo=q.get("typeLabel", ""),
+                mercato=q.get("mercato", ""),
+                comparto=q.get("comparto") or None,
+                sotto_comparto=q.get("subcomparto") or None,
+                dettaglio_mercato=q.get("marketDetail") or None,
+                sotto_tipo=q.get("subtype") or None,
+                link=q.get("link") or None,
+            )
+        )
+
+    return risultati
+
+
+def _varianti_query(query: str) -> list[str]:
+    """Genera varianti progressive di una query per il match per-prefisso di BI.
+
+    1. Accorcia ogni parola lunga (>7 caratteri) a un prefisso di 6 caratteri
+       (es. ``DIVERSIFICATO`` → ``Divers``, prefisso valido di ``Divers.``).
+    2. Rimuove progressivamente le parole più lunghe (≥8 caratteri), spesso
+       quelle che non combaciano con il nome abbreviato di Borsa Italiana.
+    """
+    tokens = query.split()
+    if not tokens:
+        return []
+
+    varianti: list[str] = []
+
+    def _aggiungi(nuovi: list[str]) -> None:
+        testo = " ".join(nuovi).strip()
+        if testo and testo.lower() != query.lower() and testo not in varianti:
+            varianti.append(testo)
+
+    # 1) Prefisso a 6 caratteri per le parole alfabetiche lunghe.
+    stemmed = [t[:6] if len(t) > 7 and t.isalpha() else t for t in tokens]
+    if stemmed != tokens:
+        _aggiungi(stemmed)
+
+    # 2) Rimozione progressiva delle parole più lunghe (≥8 caratteri).
+    ordine_lunghezza = sorted(range(len(tokens)), key=lambda i: len(tokens[i]), reverse=True)
+    rimossi: set[int] = set()
+    for idx in ordine_lunghezza:
+        if len(tokens[idx]) < 8:
+            break
+        rimossi.add(idx)
+        residui = [t for i, t in enumerate(tokens) if i not in rimossi]
+        if len(residui) >= 2:
+            _aggiungi(residui)
+
+    return varianti
