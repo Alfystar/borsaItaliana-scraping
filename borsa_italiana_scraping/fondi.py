@@ -21,7 +21,8 @@ estratta è la data reale del NAV, **non** ``date.today()``.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+import unicodedata
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 
@@ -53,6 +54,12 @@ class DatiFondo:
     data_nav: date
     url: str
     isin: str | None = None  # estratto dalla pagina, se presente
+    # Dettagli descrittivi estratti dalle sezioni della pagina-fondo (solo voci
+    # valorizzate: le voci "N.D." vengono scartate). Utili per arricchire la
+    # descrizione dell'asset lato consumatore.
+    caratteristiche: dict[str, str] = field(default_factory=dict)
+    societa_gestione: dict[str, str] = field(default_factory=dict)
+    costi: dict[str, str] = field(default_factory=dict)
 
 
 def estrai_codice_da_url(url: str) -> str | None:
@@ -74,6 +81,56 @@ def _estrai_isin_pagina(soup) -> str | None:
     """Estrae il primo ISIN presente nel testo della pagina-fondo (best-effort)."""
     match = _RE_ISIN.search(soup.get_text(" ", strip=True).upper())
     return match.group(1) if match else None
+
+
+def _norm_heading(testo: str) -> str:
+    """Normalizza un heading per il confronto (senza accenti, minuscolo, spazi collassati)."""
+    senza_accenti = unicodedata.normalize("NFKD", testo or "").encode("ascii", "ignore").decode()
+    return " ".join(senza_accenti.split()).lower()
+
+
+def _e_non_disponibile(valore: str) -> bool:
+    """True se il valore è un placeholder "non disponibile" di Borsa Italiana."""
+    v = (valore or "").strip().upper().replace(" ", "")
+    return v in {"N.D.", "N.D", "ND", "-", "--", ""}
+
+
+def _estrai_dettagli_sezione(soup, heading_testo: str, escludi: tuple[str, ...] = ()) -> dict[str, str]:
+    """Estrae le coppie label:value dalla tabella che segue un heading di sezione.
+
+    Le pagine-fondo di Borsa Italiana raggruppano i dettagli sotto heading
+    (``<h3>``: "Caratteristiche", "Società di Gestione", "Costi", …), ciascuno
+    seguito da una tabella label/valore. Restituisce solo le voci **valorizzate**
+    (scarta ``N.D.``/``-``/vuoto) e con label non presente in ``escludi``.
+
+    Il confronto sul testo dell'heading è esatto ma insensibile ad accenti,
+    maiuscole e spaziatura, così da evitare falsi positivi (es. un ``<h2>`` di
+    titolo pagina che elenca più sezioni).
+    """
+    obiettivo = _norm_heading(heading_testo)
+    escludi_norm = {_norm_heading(e) for e in escludi}
+    for h in soup.find_all(["h2", "h3", "h4"]):
+        if _norm_heading(h.get_text()) != obiettivo:
+            continue
+        # La tabella della sezione è quella che segue l'heading **prima** del
+        # prossimo heading: se dopo l'heading arriva subito un altro heading la
+        # sezione non ha tabella propria (es. valori tutti "N.D." senza tabella).
+        successivo = h.find_next(["h2", "h3", "h4", "table"])
+        if successivo is None or successivo.name != "table":
+            return {}
+        tabella = successivo
+        dettagli: dict[str, str] = {}
+        for tr in tabella.find_all("tr"):
+            celle = [_pulisci_testo(td.get_text()) for td in tr.find_all(["td", "th"])]
+            celle = [c for c in celle if c]
+            if len(celle) < 2:
+                continue
+            label, valore = celle[0], celle[1]
+            if _e_non_disponibile(valore) or _norm_heading(label) in escludi_norm:
+                continue
+            dettagli[label] = valore
+        return dettagli
+    return {}
 
 
 def _estrai_dati_pagina_fondo(
@@ -121,15 +178,11 @@ def _estrai_da_url(url: str, sessione: Sessione, codice_atteso: str) -> DatiFond
     try:
         soup, url_finale = sessione.get_html_con_url(url)
     except Exception as err:
-        raise StrumentoNonTrovato(
-            f"Pagina-fondo non raggiungibile per il codice '{codice_atteso}': {err}"
-        ) from err
+        raise StrumentoNonTrovato(f"Pagina-fondo non raggiungibile per il codice '{codice_atteso}': {err}") from err
 
     nome, nav, variazione, valuta, data_nav = _estrai_dati_pagina_fondo(soup)
     if nav is None or data_nav is None:
-        raise DatiNonDisponibili(
-            f"NAV/data non disponibili nella pagina-fondo '{codice_atteso}'"
-        )
+        raise DatiNonDisponibili(f"NAV/data non disponibili nella pagina-fondo '{codice_atteso}'")
 
     # Dopo un eventuale redirect il codice può cambiare: preferisci l'URL finale.
     codice_finale = estrai_codice_da_url(url_finale) or codice_atteso
@@ -143,6 +196,9 @@ def _estrai_da_url(url: str, sessione: Sessione, codice_atteso: str) -> DatiFond
         data_nav=data_nav,
         url=url_finale,
         isin=_estrai_isin_pagina(soup),
+        caratteristiche=_estrai_dettagli_sezione(soup, "Caratteristiche", escludi=("Isin", "Valuta")),
+        societa_gestione=_estrai_dettagli_sezione(soup, "Società di Gestione"),
+        costi=_estrai_dettagli_sezione(soup, "Costi"),
     )
 
 
