@@ -101,6 +101,9 @@ def ottieni_intraday(
 def ottieni_prezzo_corrente(
     isin: str,
     sessione: Sessione | None = None,
+    exchange: str | None = None,
+    mic: str | None = None,
+    platform: str | None = None,
 ) -> PrezzoCorrente:
     """Ottiene il prezzo corrente (o più recente) di uno strumento.
 
@@ -110,6 +113,10 @@ def ottieni_prezzo_corrente(
     Args:
         isin: codice ISIN dello strumento.
         sessione: sessione HTTP riutilizzabile.
+        exchange: codice exchange della grafici API (es. ``"ETLX"``);
+            ``None`` → XMIL con auto-discovery (vedi :func:`ottieni_storico`).
+        mic: codice MIC per il fallback scraping della pagina scheda.
+        platform: piattaforma per il fallback scraping (es. ``"TLX"``).
 
     Returns:
         ``PrezzoCorrente`` con prezzo, data, valuta e fonte.
@@ -121,20 +128,20 @@ def ottieni_prezzo_corrente(
         sessione = Sessione()
 
     try:
-        return _prezzo_da_api(isin, sessione)
+        return _prezzo_da_api(isin, sessione, exchange=exchange)
     except Exception:
         # Fallback: scraping pagina scheda
-        return _prezzo_da_scraping(isin, sessione)
+        return _prezzo_da_scraping(isin, sessione, mic=mic, platform=platform)
     finally:
         if sessione_locale:
             sessione.chiudi()
 
 
-def _prezzo_da_api(isin: str, sessione: Sessione) -> PrezzoCorrente:
+def _prezzo_da_api(isin: str, sessione: Sessione, exchange: str | None = None) -> PrezzoCorrente:
     """Estrae il prezzo dall'ultimo punto dello storico 1M."""
     from .storico import ottieni_storico
 
-    risultato = ottieni_storico(isin, periodo="1M", sessione=sessione)
+    risultato = ottieni_storico(isin, periodo="1M", sessione=sessione, exchange=exchange)
     if not risultato.punti:
         raise DatiNonDisponibili(f"Nessun punto storico per '{isin}'")
 
@@ -151,16 +158,21 @@ def _prezzo_da_api(isin: str, sessione: Sessione) -> PrezzoCorrente:
         prezzo=ultimo.ultimo,
         variazione_percentuale=variazione,
         data=ultimo.data,
-        valuta="EUR",  # L'API non fornisce la valuta; default EUR
+        valuta=risultato.valuta or "EUR",
         fonte="api",
     )
 
 
-def _prezzo_da_scraping(isin: str, sessione: Sessione) -> PrezzoCorrente:
+def _prezzo_da_scraping(
+    isin: str,
+    sessione: Sessione,
+    mic: str | None = None,
+    platform: str | None = None,
+) -> PrezzoCorrente:
     """Estrae il prezzo dalla pagina scheda (fallback)."""
     from .scheda import ottieni_scheda
 
-    scheda = ottieni_scheda(isin, sessione=sessione)
+    scheda = ottieni_scheda(isin, sessione=sessione, mic=mic, platform=platform)
     return PrezzoCorrente(
         isin=scheda.isin,
         prezzo=scheda.prezzo,

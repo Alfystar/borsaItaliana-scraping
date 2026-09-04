@@ -11,6 +11,17 @@ class StrumentoNonTrovato(BorsaItalianaErrore):
     pass
 
 
+class StrumentoNonRisolto(StrumentoNonTrovato):
+    """La pagina universale non ha rediretto a una scheda strumento.
+
+    Sollevata quando ``search/scheda.html?code=…`` non redirige alla pagina di
+    mercato: lo strumento può non esistere, oppure servono ``mic``/``platform``
+    corretti, oppure il mercato non è gestito. Sottoclasse di
+    ``StrumentoNonTrovato`` per compatibilità con i ``except`` esistenti.
+    """
+    pass
+
+
 class DatiNonDisponibili(BorsaItalianaErrore):
     """I dati richiesti non sono disponibili (periodo non supportato, mercato chiuso, ecc.)."""
     pass

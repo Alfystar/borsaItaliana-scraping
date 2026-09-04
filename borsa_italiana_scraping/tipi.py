@@ -31,6 +31,7 @@ class StoricoRisultato:
     isin: str
     codice_borsa: str  # es. "XMIL"
     punti: list[PuntoStorico] = field(default_factory=list)
+    valuta: str = "EUR"  # da ``history.currency`` della grafici API (es. "USD")
 
 
 # ---------------------------------------------------------------------------

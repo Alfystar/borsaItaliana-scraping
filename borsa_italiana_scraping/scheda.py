@@ -8,7 +8,7 @@ from decimal import Decimal, InvalidOperation
 
 from bs4 import BeautifulSoup, Tag
 
-from .eccezioni import DatiNonDisponibili, StrumentoNonTrovato
+from .eccezioni import DatiNonDisponibili, StrumentoNonRisolto, StrumentoNonTrovato
 from .sessione import Sessione
 from .tipi import SchedaStrumento
 
@@ -213,12 +213,30 @@ def _estrai_nome(soup: BeautifulSoup) -> str:
     return "Sconosciuto"
 
 
-def _estrai_mercato(soup: BeautifulSoup, lingua: str) -> str:
-    """Estrae il mercato di negoziazione."""
+def _estrai_mercato(soup: BeautifulSoup, lingua: str, url_finale: str | None = None) -> str:
+    """Estrae il mercato di negoziazione.
+
+    Fallback: deriva dal path dell'URL finale (``/borsa/obbligazioni/eurotlx/scheda/…``
+    → ``EUROTLX``). Mai inventare un mercato di default: se non ricavabile, ``""``
+    (il chiamante omette il campo).
+    """
     etichette = ["Market", "Mercato", "Mercato di quotazione",
                  "Quotation Market", "Market Segment"]
     val = _trova_valore(soup, etichette)
-    return val if val else "MOT"
+    if val:
+        return val
+    if url_finale and "/scheda/" in url_finale:
+        segs = [s for s in url_finale.split("?")[0].split("/") if s]
+        non_mercato = {"borsa", "scheda", "obbligazioni", "azioni", "etf", "etc-etn",
+                       "cw-e-certificates", "fondi", "fondi-chiusi"}
+        try:
+            i, j = segs.index("borsa"), segs.index("scheda")
+        except ValueError:
+            return ""
+        mid = [s for s in segs[i + 1:j] if s not in non_mercato]
+        if mid:
+            return "/".join(s.upper() for s in mid)
+    return ""
 
 
 def _estrai_valuta(soup: BeautifulSoup, lingua: str) -> tuple[str, str | None]:
@@ -257,6 +275,7 @@ def ottieni_scheda(
     mic: str | None = None,
     lingua: str = "en",
     sessione: Sessione | None = None,
+    platform: str | None = None,
 ) -> SchedaStrumento:
     """Esegue lo scraping della pagina scheda di uno strumento.
 
@@ -266,11 +285,16 @@ def ottieni_scheda(
             universale con redirect automatico.
         lingua: ``"en"`` (consigliata) o ``"it"``.
         sessione: sessione HTTP riutilizzabile.
+        platform: piattaforma (es. ``"TLX"`` per EuroTLX). Alcuni mercati
+            redirigono l'URL universale solo con mic+platform.
 
     Returns:
         ``SchedaStrumento`` con tutti i dati estratti.
 
     Raises:
+        StrumentoNonRisolto: se la pagina universale non redirige a una
+            scheda di mercato (strumento inesistente, mic/platform mancanti
+            o mercato non gestito).
         StrumentoNonTrovato: se la pagina non esiste.
         DatiNonDisponibili: se il prezzo non è leggibile.
     """
@@ -286,8 +310,19 @@ def ottieni_scheda(
         parametri: dict[str, str] = {"code": isin, "lang": lingua}
         if mic:
             parametri["mic"] = mic
+        if platform:
+            parametri["platform"] = platform
 
         soup, url_finale = sessione.get_html_con_url(_URL_SCHEDA, params=parametri)
+
+        # Nessun redirect alla pagina di mercato: lo strumento non è risolto
+        # (alcuni mercati, es. EuroTLX, richiedono mic+platform espliciti).
+        if "/search/scheda.html" in url_finale:
+            raise StrumentoNonRisolto(
+                f"La ricerca universale non ha risolto '{isin}' "
+                f"(mic={mic}, platform={platform}): strumento inesistente "
+                "o mercato non gestito."
+            )
 
         # Controlla se la pagina esiste
         testo_pagina = soup.get_text(" ", strip=True)
@@ -297,7 +332,7 @@ def ottieni_scheda(
         # Determina tipo dall'URL finale (dopo redirect)
         tipo = _determina_tipo(soup, url_finale)
         nome = _estrai_nome(soup)
-        mercato = _estrai_mercato(soup, lingua)
+        mercato = _estrai_mercato(soup, lingua, url_finale)
         valuta, valuta_liq = _estrai_valuta(soup, lingua)
 
         # Descrizione dal meta tag
@@ -310,10 +345,11 @@ def ottieni_scheda(
 
         # Prezzo principale
         prezzo = _trova_prezzo_principale(soup, lingua)
+        soup_dc: BeautifulSoup | None = None
         if prezzo is None:
             # Tentativo: provo la pagina dati-completi
             try:
-                soup_dc = _scarica_dati_completi(isin, tipo, lingua, sessione, mic)
+                soup_dc = _scarica_dati_completi(isin, tipo, lingua, sessione, mic, url_finale=url_finale)
                 prezzo = _trova_prezzo_principale(soup_dc, lingua)
                 # Estrai dati aggiuntivi dalla pagina dati-completi
                 soup = soup_dc
@@ -376,6 +412,16 @@ def ottieni_scheda(
         # Campi specifici per obbligazioni
         if tipo == "obbligazione":
             _arricchisci_obbligazione(scheda, soup, lingua)
+            # Alcuni mercati (es. EuroTLX) non mostrano emittente/scadenza nella
+            # pagina scheda: integra da dati-completi riempiendo solo i campi mancanti.
+            if scheda.emittente is None or scheda.scadenza is None:
+                if soup_dc is None:
+                    try:
+                        soup_dc = _scarica_dati_completi(isin, tipo, lingua, sessione, mic, url_finale=url_finale)
+                    except Exception:
+                        soup_dc = None
+                if soup_dc is not None:
+                    _integra_obbligazione_da_dati_completi(scheda, soup_dc, lingua)
 
         # Campi specifici per azioni
         if tipo == "azione":
@@ -394,18 +440,55 @@ def _scarica_dati_completi(
     lingua: str,
     sessione: Sessione,
     mic: str | None = None,
+    url_finale: str | None = None,
 ) -> BeautifulSoup:
-    """Scarica la pagina dati-completi per uno strumento."""
-    if tipo == "obbligazione":
-        url = _URL_DATI_COMPLETI_BOND
-    else:
-        url = _URL_DATI_COMPLETI_AZIONE
+    """Scarica la pagina dati-completi per uno strumento.
+
+    Il path di mercato è derivato dall'URL finale della scheda (dopo redirect):
+    ``…/<market-path>/scheda/<ISIN>-<MIC>.html`` → ``…/<market-path>/dati-completi.html``.
+    Copre ogni mercato (MOT/BTP, EuroTLX, ExtraMOT, GEM, …) senza mappe hardcoded;
+    se l'URL finale non è riconoscibile si ripiega sui path storici azioni/MOT.
+    """
+    url = _url_dati_completi(url_finale, tipo)
 
     parametri: dict[str, str] = {"isin": isin, "lang": lingua}
     if mic:
         parametri["mic"] = mic
 
     return sessione.get_html(url, params=parametri)
+
+
+def _url_dati_completi(url_finale: str | None, tipo: str) -> str:
+    """Deriva l'URL dati-completi dall'URL finale della scheda, con fallback storico."""
+    if url_finale and "/scheda/" in url_finale:
+        base = url_finale.split("/scheda/")[0]
+        return f"{base}/dati-completi.html"
+    return _URL_DATI_COMPLETI_BOND if tipo == "obbligazione" else _URL_DATI_COMPLETI_AZIONE
+
+
+def _integra_obbligazione_da_dati_completi(
+    scheda: SchedaStrumento,
+    soup_dc: BeautifulSoup,
+    lingua: str,
+) -> None:
+    """Riempie i campi obbligazionari mancanti dalla pagina dati-completi.
+
+    Rilancia l'arricchimento sulla pagina dati-completi e poi ripristina i valori
+    già presenti (la scheda vince; dati-completi colma solo i vuoti).
+    """
+    campi = (
+        "rendimento_lordo", "rendimento_netto", "rateo_lordo", "rateo_netto",
+        "duration_modificata", "cedola_annua", "cedola_periodale", "scadenza",
+        "emittente", "tipo_bond", "lotto_minimo", "descrizione_payout",
+        "frequenza_cedola", "convenzione_giorni", "struttura_bond", "outstanding",
+        "tipologia", "prezzo_riferimento", "data_prezzo_riferimento",
+        "data_primo_giorno",
+    )
+    backup = {c: getattr(scheda, c, None) for c in campi}
+    _arricchisci_obbligazione(scheda, soup_dc, lingua)
+    for campo, valore in backup.items():
+        if valore is not None:
+            setattr(scheda, campo, valore)
 
 
 def _arricchisci_obbligazione(

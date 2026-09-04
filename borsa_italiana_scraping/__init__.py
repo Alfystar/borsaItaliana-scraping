@@ -13,6 +13,7 @@ from .eccezioni import (
     ErroreConnessione,
     RateLimitRaggiunto,
     RicercaNonDisponibile,
+    StrumentoNonRisolto,
     StrumentoNonTrovato,
 )
 
@@ -41,7 +42,7 @@ from .fondi import (
 )
 from .lista import lista_btp
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 
 __all__ = [
     # Sessione
@@ -52,6 +53,7 @@ __all__ = [
     "ErroreConnessione",
     "RateLimitRaggiunto",
     "RicercaNonDisponibile",
+    "StrumentoNonRisolto",
     "StrumentoNonTrovato",
     # Tipi
     "IntradayRisultato",
