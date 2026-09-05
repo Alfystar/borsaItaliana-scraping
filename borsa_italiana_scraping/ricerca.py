@@ -11,9 +11,7 @@ from .sessione import Sessione
 from .tipi import RisultatoRicerca
 
 # URL endpoint JSON (scoperto dal JS ``bb.search.js`` → ``bit.init.search``)
-_URL_RICERCA = (
-    "https://www.borsaitaliana.it/borsa/searchengine/all/json/search.html"
-)
+_URL_RICERCA = "https://www.borsaitaliana.it/borsa/searchengine/all/json/search.html"
 
 
 def cerca(
@@ -60,11 +58,38 @@ def cerca(
                 if risultati:
                     break
 
+        # Soft-block WAF (rate-limit silenzioso per IP): l'endpoint risponde 200
+        # ma con OGNI sezione vuota per QUALSIASI query — osservato in produzione
+        # il 2026-09-05 dopo una sessione intensiva di test. Indistinguibile da un
+        # onesto "nessun risultato" guardando solo la query corrente, quindi si
+        # sonda con una query onnipresente: se anche quella è tutta vuota, è blocco.
+        if not risultati and _sonda_soft_block(sessione, lingua):
+            raise RicercaNonDisponibile(
+                "La ricerca risponde con payload vuoti a qualsiasi query: "
+                "probabile rate-limit del WAF verso questo IP (troppi test/ricerche "
+                "ravvicinate). Riprova più tardi o da un'altra rete."
+            )
+
         return risultati
 
     finally:
         if sessione_locale:
             sessione.chiudi()
+
+
+def _sonda_soft_block(sessione: Sessione, lingua: str) -> bool:
+    """True se l'endpoint svuota OGNI sezione anche per una query onnipresente.
+
+    Un "nessun risultato" legittimo ha le quotes vuote ma news/pagine piene
+    (es. ``XYZNONEXISTENT``); il soft-block WAF invece azzera tutte le sezioni
+    insieme. Se la sonda stessa fallisce in rete, si risponde False: il chiamante
+    mantiene il comportamento "nessun risultato".
+    """
+    try:
+        dati = sessione.get_json(_URL_RICERCA, params={"lang": lingua, "q": "ENEL"})
+    except Exception:
+        return False
+    return all(not dati.get(k) for k in ("quotes", "news", "pages", "terms", "documents"))
 
 
 def _cerca_una(query: str, lingua: str, sessione: Sessione) -> list[RisultatoRicerca]:

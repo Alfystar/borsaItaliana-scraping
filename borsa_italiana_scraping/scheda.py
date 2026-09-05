@@ -13,23 +13,17 @@ from .sessione import Sessione
 from .tipi import SchedaStrumento
 
 # URL universale (segue redirect)
-_URL_SCHEDA = (
-    "https://www.borsaitaliana.it/borsa/search/scheda.html"
-)
+_URL_SCHEDA = "https://www.borsaitaliana.it/borsa/search/scheda.html"
 
 # URL dati completi
-_URL_DATI_COMPLETI_BOND = (
-    "https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/"
-    "dati-completi.html"
-)
-_URL_DATI_COMPLETI_AZIONE = (
-    "https://www.borsaitaliana.it/borsa/azioni/dati-completi.html"
-)
+_URL_DATI_COMPLETI_BOND = "https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/" "dati-completi.html"
+_URL_DATI_COMPLETI_AZIONE = "https://www.borsaitaliana.it/borsa/azioni/dati-completi.html"
 
 
 # ------------------------------------------------------------------
 # Utilità parsing numeri
 # ------------------------------------------------------------------
+
 
 def _pulisci_testo(testo: str) -> str:
     """Rimuove spazi extra, newline e caratteri non stampabili."""
@@ -74,8 +68,7 @@ def _parsa_data_scheda(testo: str) -> date | None:
     testo = _pulisci_testo(testo)
     if not testo or testo == "-":
         return None
-    for fmt in ("%d/%m/%Y", "%m/%d/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d.%m.%Y",
-                "%d/%m/%y", "%y/%m/%d"):
+    for fmt in ("%d/%m/%Y", "%m/%d/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d.%m.%Y", "%d/%m/%y", "%y/%m/%d"):
         try:
             return datetime.strptime(testo, fmt).date()
         except ValueError:
@@ -94,6 +87,7 @@ def _parsa_percentuale(testo: str, lingua: str = "en") -> Decimal | None:
 # ------------------------------------------------------------------
 # Estrazione valori dalla pagina
 # ------------------------------------------------------------------
+
 
 def _trova_valore(soup: BeautifulSoup, etichette: list[str]) -> str | None:
     """Cerca coppie chiave-valore nella pagina.
@@ -167,8 +161,7 @@ def _trova_prezzo_principale(soup: BeautifulSoup, lingua: str) -> Decimal | None
                 return val
 
     # Cerca label "Last Price" / "Ultimo Prezzo" / "Price" / "Prezzo"
-    etichette = ["Last Price", "Ultimo Prezzo", "Price", "Prezzo", "Last",
-                 "Prezzo Ufficiale", "Official Price"]
+    etichette = ["Last Price", "Ultimo Prezzo", "Price", "Prezzo", "Last", "Prezzo Ufficiale", "Official Price"]
     val_str = _trova_valore(soup, etichette)
     if val_str:
         val = _parsa_numero(val_str, lingua)
@@ -220,20 +213,28 @@ def _estrai_mercato(soup: BeautifulSoup, lingua: str, url_finale: str | None = N
     → ``EUROTLX``). Mai inventare un mercato di default: se non ricavabile, ``""``
     (il chiamante omette il campo).
     """
-    etichette = ["Market", "Mercato", "Mercato di quotazione",
-                 "Quotation Market", "Market Segment"]
+    etichette = ["Market", "Mercato", "Mercato di quotazione", "Quotation Market", "Market Segment"]
     val = _trova_valore(soup, etichette)
     if val:
         return val
     if url_finale and "/scheda/" in url_finale:
         segs = [s for s in url_finale.split("?")[0].split("/") if s]
-        non_mercato = {"borsa", "scheda", "obbligazioni", "azioni", "etf", "etc-etn",
-                       "cw-e-certificates", "fondi", "fondi-chiusi"}
+        non_mercato = {
+            "borsa",
+            "scheda",
+            "obbligazioni",
+            "azioni",
+            "etf",
+            "etc-etn",
+            "cw-e-certificates",
+            "fondi",
+            "fondi-chiusi",
+        }
         try:
             i, j = segs.index("borsa"), segs.index("scheda")
         except ValueError:
             return ""
-        mid = [s for s in segs[i + 1:j] if s not in non_mercato]
+        mid = [s for s in segs[i + 1 : j] if s not in non_mercato]
         if mid:
             return "/".join(s.upper() for s in mid)
     return ""
@@ -247,10 +248,14 @@ def _estrai_valuta(soup: BeautifulSoup, lingua: str) -> tuple[str, str | None]:
     Se il campo ha un solo valore, liquidazione è None.
     """
     etichette = [
-        "Negotiation Currency", "Negotiation currency",
-        "Valuta di Negoziazione", "Valuta di negoziazione",
-        "Trading Currency", "Settlement Currency",
-        "Valuta di Liquidazione", "Valuta",
+        "Negotiation Currency",
+        "Negotiation currency",
+        "Valuta di Negoziazione",
+        "Valuta di negoziazione",
+        "Trading Currency",
+        "Settlement Currency",
+        "Valuta di Liquidazione",
+        "Valuta",
     ]
     val = _trova_valore(soup, etichette)
     if val:
@@ -270,12 +275,14 @@ def _estrai_valuta(soup: BeautifulSoup, lingua: str) -> tuple[str, str | None]:
 # Funzione principale
 # ------------------------------------------------------------------
 
+
 def ottieni_scheda(
     isin: str,
     mic: str | None = None,
     lingua: str = "en",
     sessione: Sessione | None = None,
     platform: str | None = None,
+    url_diretto: str | None = None,
 ) -> SchedaStrumento:
     """Esegue lo scraping della pagina scheda di uno strumento.
 
@@ -287,6 +294,10 @@ def ottieni_scheda(
         sessione: sessione HTTP riutilizzabile.
         platform: piattaforma (es. ``"TLX"`` per EuroTLX). Alcuni mercati
             redirigono l'URL universale solo con mic+platform.
+        url_diretto: URL canonico già risolto (es. da un motore di ricerca
+            esterno, ``…/obbligazioni/eurotlx/scheda/<ISIN>-<MIC>.html``).
+            Bypassa del tutto la pagina universale: utile quando la search del
+            sito non indicizza (ancora) lo strumento o non abbiamo mic/platform.
 
     Returns:
         ``SchedaStrumento`` con tutti i dati estratti.
@@ -306,14 +317,18 @@ def ottieni_scheda(
         sessione = Sessione()
 
     try:
-        # Scarica la pagina scheda (segue redirect automatico)
-        parametri: dict[str, str] = {"code": isin, "lang": lingua}
-        if mic:
-            parametri["mic"] = mic
-        if platform:
-            parametri["platform"] = platform
+        if url_diretto:
+            # URL canonico già risolto: niente pagina universale, niente redirect.
+            soup, url_finale = sessione.get_html_con_url(url_diretto, params={"lang": lingua})
+        else:
+            # Scarica la pagina scheda (segue redirect automatico)
+            parametri: dict[str, str] = {"code": isin, "lang": lingua}
+            if mic:
+                parametri["mic"] = mic
+            if platform:
+                parametri["platform"] = platform
 
-        soup, url_finale = sessione.get_html_con_url(_URL_SCHEDA, params=parametri)
+            soup, url_finale = sessione.get_html_con_url(_URL_SCHEDA, params=parametri)
 
         # Nessun redirect alla pagina di mercato: lo strumento non è risolto
         # (alcuni mercati, es. EuroTLX, richiedono mic+platform espliciti).
@@ -357,37 +372,35 @@ def ottieni_scheda(
                 pass
 
         if prezzo is None:
-            raise DatiNonDisponibili(
-                f"Impossibile estrarre il prezzo dalla pagina scheda di '{isin}'"
-            )
+            raise DatiNonDisponibili(f"Impossibile estrarre il prezzo dalla pagina scheda di '{isin}'")
 
         # Variazione %
-        variazione_str = _trova_valore(soup, [
-            "Var %", "Var%", "Change %", "Variazione %", "Var. %", "Perf.",
-        ])
+        variazione_str = _trova_valore(
+            soup,
+            [
+                "Var %",
+                "Var%",
+                "Change %",
+                "Variazione %",
+                "Var. %",
+                "Perf.",
+            ],
+        )
         variazione = _parsa_percentuale(variazione_str, lingua) if variazione_str else None
 
         # Campi comuni: range giornaliero e annuale
-        apertura = _parsa_numero(
-            _trova_valore(soup, ["Opening", "Apertura"]) or "", lingua
-        )
-        minimo_giorno = _parsa_numero(
-            _trova_valore(soup, ["Day Low", "Minimo Giorno"]) or "", lingua
-        )
-        massimo_giorno = _parsa_numero(
-            _trova_valore(soup, ["Day High", "Massimo Giorno"]) or "", lingua
-        )
+        apertura = _parsa_numero(_trova_valore(soup, ["Opening", "Apertura"]) or "", lingua)
+        minimo_giorno = _parsa_numero(_trova_valore(soup, ["Day Low", "Minimo Giorno"]) or "", lingua)
+        massimo_giorno = _parsa_numero(_trova_valore(soup, ["Day High", "Massimo Giorno"]) or "", lingua)
 
         # Year Low/High — il formato può essere "8.808 - 26/02/19"
         min_anno_raw = _trova_valore(soup, ["Year Low", "Minimo Anno"])
         max_anno_raw = _trova_valore(soup, ["Year High", "Massimo Anno"])
         minimo_anno = _parsa_numero(
-            min_anno_raw.split("-")[0].strip() if min_anno_raw and "-" in min_anno_raw
-            else (min_anno_raw or ""), lingua
+            min_anno_raw.split("-")[0].strip() if min_anno_raw and "-" in min_anno_raw else (min_anno_raw or ""), lingua
         )
         massimo_anno = _parsa_numero(
-            max_anno_raw.split("-")[0].strip() if max_anno_raw and "-" in max_anno_raw
-            else (max_anno_raw or ""), lingua
+            max_anno_raw.split("-")[0].strip() if max_anno_raw and "-" in max_anno_raw else (max_anno_raw or ""), lingua
         )
 
         # Costruisci il risultato base
@@ -477,11 +490,25 @@ def _integra_obbligazione_da_dati_completi(
     già presenti (la scheda vince; dati-completi colma solo i vuoti).
     """
     campi = (
-        "rendimento_lordo", "rendimento_netto", "rateo_lordo", "rateo_netto",
-        "duration_modificata", "cedola_annua", "cedola_periodale", "scadenza",
-        "emittente", "tipo_bond", "lotto_minimo", "descrizione_payout",
-        "frequenza_cedola", "convenzione_giorni", "struttura_bond", "outstanding",
-        "tipologia", "prezzo_riferimento", "data_prezzo_riferimento",
+        "rendimento_lordo",
+        "rendimento_netto",
+        "rateo_lordo",
+        "rateo_netto",
+        "duration_modificata",
+        "cedola_annua",
+        "cedola_periodale",
+        "scadenza",
+        "emittente",
+        "tipo_bond",
+        "lotto_minimo",
+        "descrizione_payout",
+        "frequenza_cedola",
+        "convenzione_giorni",
+        "struttura_bond",
+        "outstanding",
+        "tipologia",
+        "prezzo_riferimento",
+        "data_prezzo_riferimento",
         "data_primo_giorno",
     )
     backup = {c: getattr(scheda, c, None) for c in campi}
@@ -498,145 +525,240 @@ def _arricchisci_obbligazione(
 ) -> None:
     """Popola i campi specifici per obbligazioni."""
     # Rendimento lordo
-    val = _trova_valore(soup, [
-        "Gross Yield", "Rendimento Lordo", "YTM Gross",
-        "Gross Yield to Maturity", "Gross yield to maturity",
-    ])
+    val = _trova_valore(
+        soup,
+        [
+            "Gross Yield",
+            "Rendimento Lordo",
+            "YTM Gross",
+            "Gross Yield to Maturity",
+            "Gross yield to maturity",
+        ],
+    )
     scheda.rendimento_lordo = _parsa_percentuale(val, lingua) if val else None
 
     # Rendimento netto
-    val = _trova_valore(soup, [
-        "Net Yield", "Rendimento Netto", "YTM Net",
-        "Net Yield to Maturity", "Net yield to maturity",
-    ])
+    val = _trova_valore(
+        soup,
+        [
+            "Net Yield",
+            "Rendimento Netto",
+            "YTM Net",
+            "Net Yield to Maturity",
+            "Net yield to maturity",
+        ],
+    )
     scheda.rendimento_netto = _parsa_percentuale(val, lingua) if val else None
 
     # Rateo lordo
-    val = _trova_valore(soup, [
-        "Gross Accrued Interest", "Rateo Lordo",
-        "Accrued Interest Gross", "Gross accrued interest",
-    ])
+    val = _trova_valore(
+        soup,
+        [
+            "Gross Accrued Interest",
+            "Rateo Lordo",
+            "Accrued Interest Gross",
+            "Gross accrued interest",
+        ],
+    )
     scheda.rateo_lordo = _parsa_numero(val, lingua) if val else None
 
     # Rateo netto
-    val = _trova_valore(soup, [
-        "Net Accrued Interest", "Rateo Netto",
-        "Accrued Interest Net", "Net accrued interest",
-    ])
+    val = _trova_valore(
+        soup,
+        [
+            "Net Accrued Interest",
+            "Rateo Netto",
+            "Accrued Interest Net",
+            "Net accrued interest",
+        ],
+    )
     scheda.rateo_netto = _parsa_numero(val, lingua) if val else None
 
     # Duration modificata
-    val = _trova_valore(soup, [
-        "Modified Duration", "Duration Modificata",
-        "Mod. Duration",
-    ])
+    val = _trova_valore(
+        soup,
+        [
+            "Modified Duration",
+            "Duration Modificata",
+            "Mod. Duration",
+        ],
+    )
     scheda.duration_modificata = _parsa_numero(val, lingua) if val else None
 
     # Cedola annua
-    val = _trova_valore(soup, [
-        "Annual Coupon Rate", "Cedola Annua",
-        "Annual Coupon", "Tasso Cedola Annuale",
-    ])
+    val = _trova_valore(
+        soup,
+        [
+            "Annual Coupon Rate",
+            "Cedola Annua",
+            "Annual Coupon",
+            "Tasso Cedola Annuale",
+        ],
+    )
     scheda.cedola_annua = _parsa_percentuale(val, lingua) if val else None
 
     # Cedola periodale
-    val = _trova_valore(soup, [
-        "Periodic Coupon Rate", "Cedola Periodale",
-        "Periodic Coupon", "Tasso Cedola Periodale",
-    ])
+    val = _trova_valore(
+        soup,
+        [
+            "Periodic Coupon Rate",
+            "Cedola Periodale",
+            "Periodic Coupon",
+            "Tasso Cedola Periodale",
+        ],
+    )
     scheda.cedola_periodale = _parsa_percentuale(val, lingua) if val else None
 
     # Scadenza
-    val = _trova_valore(soup, [
-        "Maturity Date", "Scadenza", "Maturity",
-        "Data Scadenza", "Expiry Date", "Data Scadenza",
-    ])
+    val = _trova_valore(
+        soup,
+        [
+            "Maturity Date",
+            "Scadenza",
+            "Maturity",
+            "Data Scadenza",
+            "Expiry Date",
+            "Data Scadenza",
+        ],
+    )
     scheda.scadenza = _parsa_data_scheda(val) if val else None
 
     # Emittente
-    val = _trova_valore(soup, [
-        "Issuer", "Emittente", "Issuer Name",
-    ])
+    val = _trova_valore(
+        soup,
+        [
+            "Issuer",
+            "Emittente",
+            "Issuer Name",
+        ],
+    )
     scheda.emittente = val
 
     # Tipo bond (coupon type)
-    val = _trova_valore(soup, [
-        "Coupon Type", "Tipo Cedola", "Bond Type",
-        "Tipo Obbligazione",
-    ])
+    val = _trova_valore(
+        soup,
+        [
+            "Coupon Type",
+            "Tipo Cedola",
+            "Bond Type",
+            "Tipo Obbligazione",
+        ],
+    )
     scheda.tipo_bond = val
 
     # Lotto minimo
-    val = _trova_valore(soup, [
-        "Lot Size", "Minimum Lot", "Lotto Minimo",
-        "Min. Lot", "Min Lot",
-    ])
+    val = _trova_valore(
+        soup,
+        [
+            "Lot Size",
+            "Minimum Lot",
+            "Lotto Minimo",
+            "Min. Lot",
+            "Min Lot",
+        ],
+    )
     if val:
         numero = _parsa_numero(val, lingua)
         scheda.lotto_minimo = int(numero) if numero else None
 
     # Descrizione payout
-    val = _trova_valore(soup, [
-        "Payout Description", "Descrizione Payout",
-        "Coupon Description",
-    ])
+    val = _trova_valore(
+        soup,
+        [
+            "Payout Description",
+            "Descrizione Payout",
+            "Coupon Description",
+        ],
+    )
     scheda.descrizione_payout = val
 
     # --- Nuovi campi ---
 
     # Frequenza cedola
-    val = _trova_valore(soup, [
-        "Coupon Frequency", "Frequenza Cedola",
-        "Frequenza Cedole",
-    ])
+    val = _trova_valore(
+        soup,
+        [
+            "Coupon Frequency",
+            "Frequenza Cedola",
+            "Frequenza Cedole",
+        ],
+    )
     scheda.frequenza_cedola = val
 
     # Convenzione giorni
-    val = _trova_valore(soup, [
-        "Day Count Convention", "Convenzione Giorni",
-        "Day Count",
-    ])
+    val = _trova_valore(
+        soup,
+        [
+            "Day Count Convention",
+            "Convenzione Giorni",
+            "Day Count",
+        ],
+    )
     scheda.convenzione_giorni = val
 
     # Struttura bond
-    val = _trova_valore(soup, [
-        "Bond Structure", "Struttura Obbligazione",
-        "Struttura Bond",
-    ])
+    val = _trova_valore(
+        soup,
+        [
+            "Bond Structure",
+            "Struttura Obbligazione",
+            "Struttura Bond",
+        ],
+    )
     scheda.struttura_bond = val
 
     # Outstanding (ammontare in circolazione)
-    val = _trova_valore(soup, [
-        "Outstanding", "Ammontare in Circolazione",
-        "Circolante",
-    ])
+    val = _trova_valore(
+        soup,
+        [
+            "Outstanding",
+            "Ammontare in Circolazione",
+            "Circolante",
+        ],
+    )
     scheda.outstanding = _parsa_numero(val, lingua) if val else None
 
     # Tipologia (Italian Government Bonds, Corporate, etc.)
-    val = _trova_valore(soup, [
-        "Tipology", "Tipologia",
-    ])
+    val = _trova_valore(
+        soup,
+        [
+            "Tipology",
+            "Tipologia",
+        ],
+    )
     scheda.tipologia = val
 
     # Prezzo di riferimento
-    val = _trova_valore(soup, [
-        "Reference price", "Prezzo di Riferimento",
-        "Reference Price",
-    ])
+    val = _trova_valore(
+        soup,
+        [
+            "Reference price",
+            "Prezzo di Riferimento",
+            "Reference Price",
+        ],
+    )
     scheda.prezzo_riferimento = _parsa_numero(val, lingua) if val else None
 
     # Data prezzo di riferimento
-    val = _trova_valore(soup, [
-        "Reference price date", "Data Prezzo di Riferimento",
-        "Reference Price Date",
-    ])
+    val = _trova_valore(
+        soup,
+        [
+            "Reference price date",
+            "Data Prezzo di Riferimento",
+            "Reference Price Date",
+        ],
+    )
     scheda.data_prezzo_riferimento = _parsa_data_scheda(val) if val else None
 
     # Data primo giorno di negoziazione
-    val = _trova_valore(soup, [
-        "First Day of Trading", "Primo Giorno di Negoziazione",
-        "Prima Data di Negoziazione",
-    ])
+    val = _trova_valore(
+        soup,
+        [
+            "First Day of Trading",
+            "Primo Giorno di Negoziazione",
+            "Prima Data di Negoziazione",
+        ],
+    )
     scheda.data_primo_giorno = _parsa_data_scheda(val) if val else None
 
 
@@ -647,50 +769,93 @@ def _arricchisci_azione(
 ) -> None:
     """Popola i campi specifici per azioni."""
     # Settore
-    val = _trova_valore(soup, [
-        "Super Sector", "Settore", "Sector",
-        "Industry Sector",
-    ])
+    val = _trova_valore(
+        soup,
+        [
+            "Super Sector",
+            "Settore",
+            "Sector",
+            "Industry Sector",
+        ],
+    )
     scheda.settore = val
 
     # Capitalizzazione
-    val = _trova_valore(soup, [
-        "Market Cap", "Capitalizzazione", "Market Capitalization",
-        "Cap. di Mercato",
-    ])
+    val = _trova_valore(
+        soup,
+        [
+            "Market Cap",
+            "Capitalizzazione",
+            "Market Capitalization",
+            "Cap. di Mercato",
+        ],
+    )
     scheda.capitalizzazione = _parsa_numero(val, lingua) if val else None
 
     # Ticker
-    val = _trova_valore(soup, [
-        "Alphanumeric Code", "Codice Alfanumerico", "Ticker",
-        "Symbol", "Alpha Code",
-    ])
+    val = _trova_valore(
+        soup,
+        [
+            "Alphanumeric Code",
+            "Codice Alfanumerico",
+            "Ticker",
+            "Symbol",
+            "Alpha Code",
+        ],
+    )
     scheda.ticker = val
 
     # Performance 1 mese
-    val = _trova_valore(soup, [
-        "1 Month Performance", "Perf. 1 month", "Perf. 1 mese",
-        "Performance 1M", "Perf 1M", "1 Month",
-    ])
+    val = _trova_valore(
+        soup,
+        [
+            "1 Month Performance",
+            "Perf. 1 month",
+            "Perf. 1 mese",
+            "Performance 1M",
+            "Perf 1M",
+            "1 Month",
+        ],
+    )
     scheda.performance_1m = _parsa_percentuale(val, lingua) if val else None
 
     # Performance 6 mesi
-    val = _trova_valore(soup, [
-        "6 Months Performance", "Perf. 6 months", "Perf. 6 mesi",
-        "Performance 6M", "Perf 6M", "6 Months",
-    ])
+    val = _trova_valore(
+        soup,
+        [
+            "6 Months Performance",
+            "Perf. 6 months",
+            "Perf. 6 mesi",
+            "Performance 6M",
+            "Perf 6M",
+            "6 Months",
+        ],
+    )
     scheda.performance_6m = _parsa_percentuale(val, lingua) if val else None
 
     # Performance 1 anno
-    val = _trova_valore(soup, [
-        "1 Year Performance", "Perf. 1 year", "Perf. 1 anno",
-        "Performance 1Y", "Perf 1Y", "1 Year",
-    ])
+    val = _trova_valore(
+        soup,
+        [
+            "1 Year Performance",
+            "Perf. 1 year",
+            "Perf. 1 anno",
+            "Performance 1Y",
+            "Perf 1Y",
+            "1 Year",
+        ],
+    )
     scheda.performance_1y = _parsa_percentuale(val, lingua) if val else None
 
     # Indici di appartenenza
-    val = _trova_valore(soup, [
-        "Index", "Indice", "Indices", "Indici",
-    ])
+    val = _trova_valore(
+        soup,
+        [
+            "Index",
+            "Indice",
+            "Indices",
+            "Indici",
+        ],
+    )
     if val:
         scheda.indici = [s.strip() for s in val.split(",") if s.strip()]
